@@ -28,7 +28,7 @@ void usage () {
 
 void debug(char* ptr, uint32_t num) {
     for (int i = 0; i < num; i++)
-        printf("%#02x ", ptr[i]);
+        printf("%02X ", ptr[i]);
 }
 
 int GetAddrs(const char* interface, Mac* my_mac, Ip* my_ip) {   
@@ -110,7 +110,6 @@ int main (int argc, char* argv[]) {
     char* pattern = (char*)malloc(strlen(argv[2]) + 1); // get pattern
     memset(pattern, 0, strlen(argv[2]) + 1);
     strncpy(pattern, argv[2], strlen(argv[2])); // copy ->  Host: gilgil.net 
-    strncpy(pattern + (strlen(argv[2])), "\r\n", 2); // add \r\n -> Host: gilgil.net\r\n
 
     const char* hostname_pattern = "Host: ([a-zA-Z0-9.-]+)\r\n";
     regex_t regex;
@@ -177,21 +176,21 @@ int main (int argc, char* argv[]) {
                     PTcpHdr tcphdr_my = (PTcpHdr)(my_packet + iphdr_my_len); // tcp header
                     memcpy(my_packet + iphdr_my_len + tcphdr_my_len, tcpdata_my, tcpdata_my_len); // copy tcp data to new packet
 
-                    tcphdr_my->sport = tcp_hdr->sport; // from server
-                    tcphdr_my->dport = tcp_hdr->dport; // to clinet 
-                    tcphdr_my->seqnum = htonl(ntohl(tcp_hdr->seqnum) + tcpdata_len); // sequence number 
-                    tcphdr_my->acknum = tcp_hdr->seqnum; // sequence number
+                    tcphdr_my->sport = tcp_hdr->dport; // from server
+                    tcphdr_my->dport = tcp_hdr->sport; // to clinet 
+                    tcphdr_my->seqnum = tcp_hdr->acknum; // sequence number 
+                    tcphdr_my->acknum = htonl(ntohl(tcp_hdr->seqnum) + tcpdata_len); // sequence number
                     tcphdr_my->th_off = tcphdr_my_len / 4; // tcp header len = 20 / 4
                     tcphdr_my->flags = 0b00010001; // ACK | FIN flag
-                    tcphdr_my->win = htons(5840); // Window Size
+                    tcphdr_my->win = htons(60000); // Window Size
 
                     iphdr_my->ip_len = iphdr_my_len / 4; // ip header len = 20 / 4
                     iphdr_my->ip_v = 4; // ipv4
                     iphdr_my->total_len = htons(my_total_len);
                     iphdr_my->ttl = 128; // ttl (128 ~ 255)
                     iphdr_my->proto = 6; // tcp
-                    iphdr_my->sip_ = ip_hdr->sip_; // from server
-                    iphdr_my->dip_ = ip_hdr->dip_; // to client
+                    iphdr_my->sip_ = ip_hdr->dip_; // from server
+                    iphdr_my->dip_ = ip_hdr->sip_; // to client
 
                     pseudo_header* psdheader = (pseudo_header*)malloc(sizeof(pseudo_header) + 1); // pseudo header for tcp checksum
                     memset(psdheader, 0, sizeof(pseudo_header) + 1);
@@ -203,7 +202,7 @@ int main (int argc, char* argv[]) {
                     uint32_t tcp_checksum = Checksum((uint16_t*)tcphdr_my, tcphdr_my_len + tcpdata_my_len) + Checksum((uint16_t*)psdheader, sizeof(pseudo_header));
                     tcphdr_my->check = (tcp_checksum & 0xffff) + (tcp_checksum >> 16);
                     iphdr_my->check = Checksum((uint16_t*)iphdr_my, iphdr_my_len);
-                    
+                    debug(my_packet, my_total_len);
                     if (sendto(rawsock, my_packet, my_total_len, 0, (struct sockaddr *)&rawaddr, sizeof(rawaddr)) < 0) {
                         perror("Send failed");
                         return -1;
@@ -212,6 +211,43 @@ int main (int argc, char* argv[]) {
                     free(psdheader);
                     free(my_packet);
                     close(rawsock);
+
+
+                    // forward packet (RST) -> server 
+                    uint32_t newpkt_len = sizeof(EthHdr) + iphdr_len + sizeof(TcpHdr); // no data, no optional header
+                    char* newpkt = (char*)malloc(newpkt_len + 1);
+                    memset(newpkt, 0, newpkt_len + 1);
+                    memcpy(newpkt, packet, newpkt_len);
+
+                    ethernet_hdr = (PEthHdr)newpkt;
+                    ip_hdr = (PIpHdr)((char*)ethernet_hdr + sizeof(EthHdr));
+                    tcp_hdr = (PTcpHdr)((char*)ip_hdr + iphdr_len);
+
+                    ethernet_hdr->smac_ = my_mac; // modify smac as mine
+                    ip_hdr->total_len = htons(iphdr_len + sizeof(TcpHdr));
+                    ip_hdr->check = 0; // initialize checksum 
+                    tcp_hdr->th_off = sizeof(TcpHdr) / 4; // tcp header length
+                    tcp_hdr->seqnum = htonl(ntohl(tcp_hdr->seqnum) + tcpdata_len);
+                    tcp_hdr->flags = 0b00010100; // RST | ACK flag
+                    tcp_hdr->check = 0; // initialize checksum
+
+                    psdheader = (pseudo_header*)malloc(sizeof(pseudo_header) + 1); // pseudo header for tcp checksum
+                    memset(psdheader, 0, sizeof(pseudo_header) + 1);
+                    psdheader->source_address = ip_hdr->sip_;
+                    psdheader->dest_address = ip_hdr->dip_;
+                    psdheader->protocol = IPPROTO_TCP;
+                    psdheader->tcp_length = htons(sizeof(TcpHdr));
+
+                    tcp_checksum = Checksum((uint16_t*)tcp_hdr, sizeof(TcpHdr)) + Checksum((uint16_t*)psdheader, sizeof(pseudo_header));
+                    tcp_hdr->check = (tcp_checksum & 0xffff) + (tcp_checksum >> 16);
+                    ip_hdr->check = Checksum((uint16_t*)ip_hdr, iphdr_len);
+ 
+                    if (pcap_sendpacket(handle, reinterpret_cast<const u_char*>(newpkt), newpkt_len)) {
+                        fprintf(stderr, "pcap_sendpacket return %d error=%s\n", res, pcap_geterr(handle));
+                    }
+
+                    free(psdheader);
+                    free(newpkt);
                 }
             }
         }
