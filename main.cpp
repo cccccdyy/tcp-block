@@ -202,12 +202,11 @@ int main (int argc, char* argv[]) {
                     uint32_t tcp_checksum = Checksum((uint16_t*)tcphdr_my, tcphdr_my_len + tcpdata_my_len) + Checksum((uint16_t*)psdheader, sizeof(pseudo_header));
                     tcphdr_my->check = (tcp_checksum & 0xffff) + (tcp_checksum >> 16);
                     iphdr_my->check = Checksum((uint16_t*)iphdr_my, iphdr_my_len);
-                    debug(my_packet, my_total_len);
+                    
                     if (sendto(rawsock, my_packet, my_total_len, 0, (struct sockaddr *)&rawaddr, sizeof(rawaddr)) < 0) {
                         perror("Send failed");
                         return -1;
                     }
-                    printf("Backward packet sended\n");
                     free(psdheader);
                     free(my_packet);
                     close(rawsock);
