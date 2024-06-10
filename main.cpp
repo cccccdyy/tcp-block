@@ -5,7 +5,6 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <unistd.h>
-#include <regex.h>
 #include "ethhdr.h"
 #include "tcphdr.h"
 #include "iphdr.h"
@@ -111,14 +110,6 @@ int main (int argc, char* argv[]) {
     memset(pattern, 0, strlen(argv[2]) + 1);
     strncpy(pattern, argv[2], strlen(argv[2])); // copy ->  Host: gilgil.net 
 
-    const char* hostname_pattern = "Host: ([a-zA-Z0-9.-]+)\r\n";
-    regex_t regex;
-    regmatch_t pmatch;
-    if (regcomp(&regex, hostname_pattern, REG_EXTENDED)) {
-        printf("[ERROR] Could not compile regex\n");
-        return -1;
-    }
-
     // resources 
     struct pcap_pkthdr* header;
     const u_char* packet;
@@ -202,7 +193,7 @@ int main (int argc, char* argv[]) {
                     uint32_t tcp_checksum = Checksum((uint16_t*)tcphdr_my, tcphdr_my_len + tcpdata_my_len) + Checksum((uint16_t*)psdheader, sizeof(pseudo_header));
                     tcphdr_my->check = (tcp_checksum & 0xffff) + (tcp_checksum >> 16);
                     iphdr_my->check = Checksum((uint16_t*)iphdr_my, iphdr_my_len);
-                    
+
                     if (sendto(rawsock, my_packet, my_total_len, 0, (struct sockaddr *)&rawaddr, sizeof(rawaddr)) < 0) {
                         perror("Send failed");
                         return -1;
