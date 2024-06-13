@@ -105,7 +105,7 @@ int main (int argc, char* argv[]) {
 		return -1;
 	}
 
-    // regular expression compile
+    // get pattern
     char* pattern = (char*)malloc(strlen(argv[2]) + 1); // get pattern
     memset(pattern, 0, strlen(argv[2]) + 1);
     strncpy(pattern, argv[2], strlen(argv[2])); // copy ->  Host: gilgil.net 
